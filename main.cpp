@@ -883,20 +883,24 @@ int main() try
 			}
 		}
 		
-		cv::Vec4f lineParam;
-		fitLineRansac(mutatedPoints, lineParam, 1000, 10);
-		double k = lineParam[1] / lineParam[0];
-		double b = lineParam[3] - k * lineParam[2];
+		int numLines = 4;
+		std::vector<cv::Vec4f> line_Ransac;
+		fitMultipleLinesRansac(mutatedPoints, line_Ransac, numLines, 1000);
 
-		cv::Point p1, p2;
+		for (int i = 0; i < line_Ransac.size(); i++)
+		{
+			double k = line_Ransac[i][1] / line_Ransac[i][0];
+			double b = line_Ransac[i][3] - k * line_Ransac[i][2];
 
-		p1.y = 640;
-		p1.x = (p1.y - b) / k;
+			cv::Point p1, p2;
+			p1.y = 640;
+			p1.x = (p1.y - b) / k;
+			p2.y = 0;
+			p2.x = (p2.y - b) / k;
 
-		p2.y = 0;
-		p2.x = (p2.y - b) / k;
+			cv::line(depth_image, p1, p2, cv::Scalar(0, 255, 0), 2);
+		}
 
-		cv::line(depth_image, p1, p2, cv::Scalar(0, 255, 0), 2);
 
 
 		//Mat depth_image_colored;
@@ -1341,3 +1345,13 @@ void fitLineRansac(const std::vector<cv::Point2f>& points,cv::Vec4f& line,int it
 	}
 }
 
+// 定义拟合多条直线的函数
+void fitMultipleLinesRansac(const std::vector<cv::Point2f>& points, std::vector<cv::Vec4f>& lines, int numLines, int iterations = 1000, double sigma = 1., double k_min = -7., double k_max = 7.) 
+{
+	for (int i = 0; i < numLines; i++) 
+	{
+		cv::Vec4f line;
+		fitLineRansac(points, line, iterations, sigma, k_min, k_max);  // 调用fitLineRansac函数拟合一条直线
+		lines.push_back(line);  // 将拟合的直线参数保存到lines中
+	}
+}
