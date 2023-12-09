@@ -6,9 +6,13 @@
 #include <fstream>
 #include <algorithm>
 #include <cstring>
-#include <iostream>
 #include <string>
-#include<vector>
+#include <vector>
+#include <cmath>
+#include <random>
+#include <limits>
+#include <opencv2/core.hpp>
+
 #include "omp.h"
 
 
@@ -93,7 +97,13 @@ float Get_K(float x1, float y1, float x2, float y2);
 // 计算两个x或y之间的中点x，中点y
 int Get_mid_axis(int num1, int num2);
 
-void fitLineRansac(const std::vector<cv::Point2f>& points, cv::Vec4f& line, int iterations = 1000, double sigma = 1.0, double k_min = -7.0, double k_max = 7.0);
+void fitLineRansac(const std::vector<cv::Point2f>& points, cv::Vec4f& line, int iterations , double sigma, double k_min , double k_max );
+
+void fitLineRANSAC(const std::vector<cv::Point2f>& points, cv::Vec4f& line, int iterations, double sigma, double k_min, double k_max);
+
+void fitMultipleLinesRansac(const std::vector<cv::Point2f>& points, std::vector<cv::Vec4f>& lines, int numLines, int iterations, double sigma, double k_min, double k_max);
+
+void draw_line_k(Mat image, float k, cv::Point point, const cv::Scalar& color, int thickness);
 
 class D435if_Camera
 {
@@ -515,7 +525,8 @@ int main() try
 			//int dx = Road_linex[2] - Road_linex[0];
 			//int dy = Road_linex[3] - Road_linex[1];
 			//double angle = atan2(double(dy), dx) * 180 / CV_PI;
-			line(aligned_image_color, cv::Point(Road_linex[0], Road_linex[1]), cv::Point(Road_linex[2], Road_linex[3]), cv::Scalar(255, 0, 0), 1);
+			
+			//line(aligned_image_color, cv::Point(Road_linex[0], Road_linex[1]), cv::Point(Road_linex[2], Road_linex[3]), cv::Scalar(255, 0, 0), 1);
 		}
 		//-------------------------- 霍夫 线段拟合
 
@@ -584,18 +595,13 @@ int main() try
 
 		// 对线段进行聚类
 		std::vector<std::vector<cv::Vec4i>> clusters = clusterLines(Road_Hough_lines, cluster_distanceThreshold);
-		vector <float> represent_lines_arctan;//直线斜率的反正切值
 		vector<cv::Vec4f> represent_line;//每组线段的代表线段
 
-		float represent_line_slope_sum = 0.0; //斜率和
-		float represent_line_slope = 0.0; //斜率
-
-		float represent_line_midpoint_x = 0.0, represent_line_midpoint_y = 0.0;
-		float represent_line_midpoint_x_sum = 0.0, represent_line_midpoint_y_sum = 0.0;
-		float represent_line_angle = 0.0;
+		float represent_line_slope = 0.0, represent_line_slope_sum = 0.0; //斜率和
+		float represent_line_midpoint_x = 0.0, represent_line_midpoint_x_sum = 0.0;
+		float represent_line_midpoint_y = 0.0, represent_line_midpoint_y_sum = 0.0;
 		float represent_line_b = 0.0, represent_line_b_sum = 0.0;
-
-		//Mat Get_line(aligned_image_color.cols, aligned_image_color.rows, CV_8UC3, Scalar(255, 255, 255));
+		float represent_line_angle = 0.0;
 
 		// 可以根据需要输出聚类结果或进行其他操作
 		for (const auto& cluster : clusters)
@@ -608,7 +614,7 @@ int main() try
 			for (const auto& line : cluster)
 			{
 				// cluster里放了一堆直线，一直循环这个cluster
-				
+				// 【属于哪个聚类的类里的直线前二多，就找哪个】
 				// 中点
 				represent_line_midpoint_x = (line[0] + line[2]) * 0.5;
 				represent_line_midpoint_y = (line[1] + line[3]) * 0.5;
@@ -621,20 +627,17 @@ int main() try
 				if (dx == 0)
 				{
 					represent_line_slope_sum = 1000000 + represent_line_slope_sum;
-					// b
 					represent_line_b = line[3] - 1000000 * line[2];
 					represent_line_b_sum = represent_line_b + represent_line_b_sum;
 				}
 				else
 				{
 					represent_line_slope_sum = dy / dx + represent_line_slope_sum;
-					// b
 					represent_line_b = line[3] - dy / dx * line[2];
 					represent_line_b_sum = represent_line_b + represent_line_b_sum;
 				}
 
-				cv::line(aligned_image_color, cv::Point(line[0], line[1]), cv::Point(line[2], line[3]), cv::Scalar(255, 156, 28), 1);
-				//cv::line(Get_line, cv::Point(line[0], line[1]), cv::Point(line[2], line[3]), cv::Scalar(11, 11, 111), 2);
+				//cv::line(aligned_image_color, cv::Point(line[0], line[1]), cv::Point(line[2], line[3]), cv::Scalar(255, 156, 28), 1);
 			}
 	
 			// 每个cluster的代表线
@@ -642,17 +645,17 @@ int main() try
 			represent_line_midpoint_x = (float)represent_line_midpoint_x_sum / cluster.size();
 			represent_line_midpoint_y = (float)represent_line_midpoint_y_sum / cluster.size();
 			represent_line_b =(float)represent_line_b_sum / cluster.size();
-			represent_lines_arctan.push_back(atan(represent_line_slope));
 			represent_line_angle = atan(represent_line_slope) * 180.0 / 3.1415926;
 
 			cv::Vec4f line(1, represent_line_slope, represent_line_midpoint_x, represent_line_midpoint_y);
 			represent_line.push_back(line);
 			
-			cout << "【代表线段】线段中点为：（" << represent_line_midpoint_x << "，" << represent_line_midpoint_y << "），";
-			cout << "线段与水平线的角度为：" << represent_line_angle << endl;
+			//cout << "【代表线段】线段中点为：（" << represent_line_midpoint_x << "，" << represent_line_midpoint_y << "），";
+			//cout << "线段与水平线的角度为：" << represent_line_angle << endl;
 			
-			cv::line(aligned_image_color, cv::Point(640, represent_line_slope* (640 - represent_line_midpoint_x) + represent_line_midpoint_y),
-				cv::Point(0, represent_line_slope* (0 - represent_line_midpoint_x) + represent_line_midpoint_y), cv::Scalar(28, 156, 255), 1);
+			draw_line_k(aligned_image_color, represent_line_slope, Point(represent_line_midpoint_x, represent_line_midpoint_y),
+				cv::Scalar(28, 156, 255), 1);
+
 
 		}
 		// ======================== 【step 1】线段聚类 & 【step 2】找出每组线段的代表直线
@@ -663,57 +666,9 @@ int main() try
 			continue;
 		}
 
-		// -------------------------【step 2】根据找到的线段，画图，对图的轮廓处理，找出每组线段的代表直线
-		//Mat Get_line_dst;
-		//Road_element_erode = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(2, 2));
-		//cv::cvtColor(Get_line, Get_line_dst, CV_BGR2GRAY);
-		//cv::threshold(Get_line_dst, Get_line_dst, 100, 255, THRESH_BINARY);
-		//erode(Get_line_dst, Get_line_dst, Road_element_erode); //腐蚀
-		//cv::GaussianBlur(Get_line_dst, Get_line_dst, cv::Size(5, 5), 0, 0);
-		//cv::Canny(Get_line_dst, Get_line_dst, 110, 310);
-		//cv::GaussianBlur(Get_line_dst, Get_line_dst, cv::Size(3, 3), 0, 0);
-		////erode(Get_line_dst, Get_line_dst, Road_element_erode); //腐蚀
-		//imshow("lines", Get_line_dst);
-		//// 获取轮廓
-		//findContours(Get_line_dst, contours, hierarchy, CV_RETR_EXTERNAL, CV_CHAIN_APPROX_SIMPLE, cv::Point(0, 0));
-		////轮廓按大小排序
-		//std::sort(contours.begin(), contours.end(), ContoursSortFun);
-		//
-		//Vec4f lines; //拟合后的直线
-		//vector<Point>points; //待检测是否存在直线的所有点
-		////float minx[50] = { 0.0 }, miny[50] = { 0.0 }, maxx[50] = { 0.0 }, maxy[50] = { 0.0 };
-		//int minx =0 , miny=0, maxx = 0, maxy =0;
-		//for (int i = 0; i < contours.size(); i++)
-		//{
-		//	if (contours[i].size() < 20)
-		//	{
-		//		break;
-		//	}
-		//	points = contours[i];
-		//	fitLine(points, lines, DIST_L1, 0, 0.01, 0.01);
-		//	// 0、1代表斜率（直线的方向向量），2、3代表点
-		//	// lines[0] dx
-		//	// lines[1] dy
-		//	// lines[2] x
-		//	// lines[3] y
-		//	float k, b;
-		//	if (lines[0] == 0)
-		//	{
-		//		k = 1000000;
-		//	}
-		//	else
-		//	{
-		//		k = lines[1] / lines[0];				//   dy / dx    求出拟合直线的斜率
-		//	}
-		//	
-		//	b = lines[3] - k * lines[2];		//   y=kx+b	 求出拟合直线的截距
-		//	
-		//	line(aligned_image_color, cv::Point(lines[2], lines[3]), cv::Point(1,k+b), cv::Scalar(255, 25, 2), 2);
-		//}
-		// -------------------------【step 2】根据找到的线段，画图，对图的轮廓处理，找出每组线段的代表直线
-		 
+	 
 
-		// -------------------------【step 3】一对线段找角平分线
+		// -------------------------【step 2】一对线段找角平分线
 
 		// 先确定斜率，再找一个点即可画出角平分线。判断角平分线与水平线的角度，在90度左右即可。
 		// 假设聚类之后的代表直线只有两条
@@ -735,23 +690,20 @@ int main() try
 
 		float bisector_angle_mid = atan(bisector_k_average) * 180.0 / 3.1415926;
 
-		int x1 = 0;
-		int y1 = bisector_k_average * (0 - bisector_X_average) + bisector_Y_average;
-		int x2 = 640;
-		int y2 = bisector_k_average * (640 - bisector_X_average) + bisector_Y_average;
+		draw_line_k(aligned_image_color, bisector_k_average, cv::Point(bisector_X_average, bisector_Y_average),
+			cv::Scalar(255, 255, 255), 1);
 
 
-		cv::line(aligned_image_color, cv::Point(x1, y1), cv::Point(x2, y2), cv::Scalar(255, 255, 255), 1);
-
-		cout << "【角平分】角平分线 y = " << bisector_k_average << "x + " << bisector_b ;
-		cout << "，线段与水平线的角度为：" << bisector_angle_mid << endl;
+		//cout << "【角平分】角平分线 y = " << bisector_k_average << "x + " << bisector_b ;
+		//cout << "，线段与水平线的角度为：" << bisector_angle_mid << endl;
 
 		// -------------------------【step 3】一对直线找角平分线
 		
 
 		// 【3 聚类】------------------------- 聚类 [天蓝色线]
 
-
+		// 发送数据
+		// 发送 角平分线与水平线的夹角 bisector_angle_mid
 
 		// 车道进行透视变换
 		// https://www.zhihu.com/question/53021663
@@ -832,24 +784,28 @@ int main() try
 
 
 		// 
-		// 深度差为8的点，RANSAC拟合直线
+		// 深度为？厘米的点，RANSAC拟合直线，求垂线，角度90度左右；（找交点，交点在画面中线附近）
 		// 
 
 
 		Mat depth_image = My_D435if_Camera.readDepthCamera();
+		Mat depth_image_colored;
 		float diatance = 0;
+		convertScaleAbs(depth_image, depth_image, 1.0, 0.0); //黑白
+		applyColorMap(depth_image, depth_image_colored, COLORMAP_AUTUMN); //彩色
 
 		// 深度数据存储二维数组
-		int height = depth_image.rows;	//y
-		int width = depth_image.cols;	//x
+		int height = depth_image_colored.rows;	//y
+		int width = depth_image_colored.cols;	//x
 		vector<vector<float>> depthArray(height, vector<float>(width, 0.0)); 
 		//eg 图片是宽200，高100，上面语句生成100行，200列的数组。[100][200]
 		//内部的vector<float>表示每一行的向量，它的大小为width，且初始值为0。
 
+		//clock_t time11 = clock();
 		// 将深度图像数据存储到二维数组中
-		for (int i = 0; i < depth_image.rows; i++)
+		for (int i = 0; i < depth_image_colored.rows; i++)
 		{
-			for (int j = 0; j < depth_image.cols; j++)
+			for (int j = 0; j < depth_image_colored.cols; j++)
 			{
 				// 获取深度值
 				diatance = aligned_depth_frame.get_distance(j, i);
@@ -857,80 +813,84 @@ int main() try
 				depthArray[i][j] = diatance;
 			}
 		}
+		//clock_t time22 = clock();
 
-		// 检测突变并找出在八厘米左右的数据点
-		int threshold = 8; // 八厘米的阈值
-		vector<Point2f> mutatedPoints;
-
+		clock_t time11 = clock();
+		// 检测在 20cm 左右的数据点
+		vector<Point2f> mutatedPoints; //mutated 突变
+		// 1 cm ：0.01
 		for (int i = 1; i < height - 1; i++) 
 		{
 			for (int j = 1; j < width - 1; j++) 
 			{
-				// 计算深度变化
-				int depthDiff = abs(depthArray[i][j] - depthArray[i - 1][j - 1])*100;
-				
+				// 计算深度
+				int depthDiff = depthArray[i][j] * 100;
 				// 判断是否满足突变条件
-				if (depthDiff >= threshold) 
+				if (depthDiff >= 25 && depthDiff <= 30) //25厘米到30厘米
 				{
-					// 获取当前点的深度值
-					int depth = depthArray[i][j];
-					// 判断当前突变点的距离 是否在身高 0.5 到 1.0
-					if (depth > 0.5 && depth < 1.0) 
-					{
-						mutatedPoints.push_back(Point(j, i));
-					}
+					cv::circle(depth_image_colored, Point(j, i), 1, Scalar(255, 255, 255));
+					mutatedPoints.push_back(Point(j, i));
 				}
 			}
 		}
+		clock_t time22 = clock();
+		cout << time22 - time11 << endl;
+
+		// 已知斜率 k ，已知线上一点 x1,y1 画直线（从左到右）
+		// 需要算出直线上另外两个点
+		// P1（ 0 ，x1 + k*(0-x1) ）
+		// P2（640，x1 + k*(640-x1) ）
+		// cv::line(img, P1, P2, cv::Scalar(255, 0, 0), 1)
+
+
+		time11 = clock();
+		Vec4f line_Ransac;
+		fitLineRansac(mutatedPoints, line_Ransac, 300, 1, -10, 10);  // 调用fitLineRansac函数拟合一条直线
 		
-		int numLines = 4;
-		std::vector<cv::Vec4f> line_Ransac;
-		fitMultipleLinesRansac(mutatedPoints, line_Ransac, numLines, 1000);
+		//100 30
+		//300 100
 
-		for (int i = 0; i < line_Ransac.size(); i++)
-		{
-			double k = line_Ransac[i][1] / line_Ransac[i][0];
-			double b = line_Ransac[i][3] - k * line_Ransac[i][2];
+		time22 = clock();
+		cout << "RANSAC用时"<<time22 - time11 << endl;
 
-			cv::Point p1, p2;
-			p1.y = 640;
-			p1.x = (p1.y - b) / k;
-			p2.y = 0;
-			p2.x = (p2.y - b) / k;
+		float k = line_Ransac[1] / line_Ransac[0];
+		float b = line_Ransac[3] - k * line_Ransac[2];
+		cv::Point p1, p2, p3;
+		p1.y = 640;
+		p1.x = (p1.y - b) / k;
+		p2.y = 0;
+		p2.x = (p2.y - b) / k;
+		
+		p3.y = 320;
+		p3.x = (p3.y - b) / k;
+		
+		cv::line(depth_image_colored, p1, p2, cv::Scalar(0, 255, 0), 2);
 
-			cv::line(depth_image, p1, p2, cv::Scalar(0, 255, 0), 2);
-		}
+		double vertical_line_k = -line_Ransac[0] / line_Ransac[1]; // 垂线斜率
+		draw_line_k(depth_image_colored, vertical_line_k, p3, cv::Scalar(255, 0, 0), 2);
 
 
+		//int numLines = 3;
+		//std::vector<cv::Vec4f> line_Ransac;
+		//fitMultipleLinesRansac(mutatedPoints, line_Ransac, numLines, 1000, 1, -0.7, 0.7);
 
-		//Mat depth_image_colored;
-		//Mat color_double, HSV_image_double;
-		//src_color_image.copyTo(color_double);
-		//convertScaleAbs(depth_image, depth_image, 1.0, 0.0); //黑白
-		//applyColorMap(depth_image, depth_image_colored, COLORMAP_RAINBOW); //彩色
-		//imshow("双木桥-depth_image_colored", depth_image_colored);
-		//for (int i = 0; i < color_double.rows; i++)
+		//for (int i = 0; i < line_Ransac.size(); i++)
 		//{
-		//	for (int j = 0; j < color_double.cols; j++)
-		//	{
-		//		diatance = aligned_depth_frame.get_distance(j, i);
-		//		if (diatance >= 0.8) // ####################################
-		//		{
-		//			color_double.at<Vec3b>(i, j)[0] = 0;
-		//			color_double.at<Vec3b>(i, j)[1] = 0;
-		//			color_double.at<Vec3b>(i, j)[2] = 0;
-		//		}
-		//	}
+		//	double k = line_Ransac[i][1] / line_Ransac[i][0];
+		//	double b = line_Ransac[i][3] - k * line_Ransac[i][2];
+		//	cv::Point p1, p2;
+		//	p1.y = 640;
+		//	p1.x = (p1.y - b) / k;
+		//	p2.y = 0;
+		//	p2.x = (p2.y - b) / k;
+		//	cv::line(depth_image, p1, p2, cv::Scalar(0, 255, 0), 2);
 		//}
-		//// ####################################
-		//inRange(color_double, cv::Scalar(0, 90, 130), cv::Scalar(50, 255, 255), color_double);
-		//imshow("双木桥-dst_image", color_double);
 
 
 
 		sprintf_s(fps_char, "fps: %f", fps);
-		cv::putText(depth_image, (string)fps_char, cv::Point(20, 20), cv::FONT_HERSHEY_PLAIN, 2, cv::Scalar(0, 255, 55), 2, 5);
-		imshow("双木桥-depth", depth_image);
+		cv::putText(depth_image_colored, (string)fps_char, cv::Point(20, 20), cv::FONT_HERSHEY_PLAIN, 2, cv::Scalar(0, 255, 55), 2, 5);
+		imshow("双木桥-depth", depth_image_colored);
 
 		
 
@@ -1304,22 +1264,20 @@ void fitLineRansac(const std::vector<cv::Point2f>& points,cv::Vec4f& line,int it
 	cv::RNG rng; // 随机数生成器
 	double bestScore = -1.0; // 最佳匹配得分，初始化为-1.0
 
+	int i1 = 0, i2 = 0;
+
 	for (int k = 0; k < iterations; k++)
 	{
-		// 循环迭代次数
-		int i1 = 0, i2 = 0;
-		while (i1 == i2)
-		{
-			// 随机选择两个不同的点的索引
-			i1 = rng(n);
-			i2 = rng(n);
-		}
+		// 随机选择两个不同的点的索引
+		i1 = rng(n);
+		i2 = rng(n);
 		const cv::Point2f& p1 = points[i1];
 		const cv::Point2f& p2 = points[i2];
 
 		cv::Point2f dp = p2 - p1; //直线的方向向量
-		dp *= 1.0 / norm(dp); // 归一化方向向量
+		dp = dp * 1.0 / norm(dp); // 归一化方向向量
 		double score = 0; // 当前模型的得分
+		//double slope = dp.y / dp.x;
 
 		if (dp.y / dp.x <= k_max && dp.y / dp.x >= k_min)
 		{
@@ -1328,11 +1286,11 @@ void fitLineRansac(const std::vector<cv::Point2f>& points,cv::Vec4f& line,int it
 			{
 				// 计算点到直线的向量
 				cv::Point2f v = points[i] - p1;
-				double d = v.y * dp.x - v.x * dp.y;//向量a与b叉乘/向量b的模.||b||=1./norm(dp)
+				double d = v.y * dp.x - v.x * dp.y; //向量a与b叉乘/向量b的模.||b||=1./norm(dp)
 				if (fabs(d) < sigma)
 				{
 					// 使用误差定义的方式计算得分
-					score += 1;
+					score = score+1;
 				}
 			}
 		}
@@ -1343,6 +1301,7 @@ void fitLineRansac(const std::vector<cv::Point2f>& points,cv::Vec4f& line,int it
 			bestScore = score;
 		}
 	}
+
 }
 
 // 定义拟合多条直线的函数
@@ -1353,5 +1312,67 @@ void fitMultipleLinesRansac(const std::vector<cv::Point2f>& points, std::vector<
 		cv::Vec4f line;
 		fitLineRansac(points, line, iterations, sigma, k_min, k_max);  // 调用fitLineRansac函数拟合一条直线
 		lines.push_back(line);  // 将拟合的直线参数保存到lines中
+	}
+}
+
+void draw_line_k(Mat image,float k, cv::Point point, const cv::Scalar &color,int thickness )
+{
+	cv::Point p1, p2;
+	p1.x = 0;
+	p1.y = point.y + k * (p1.x - point.x);
+	p2.x = 640;
+	p2.y = point.y + k * (p2.x - point.x);
+	cv::line(image, p1, p2, color, thickness);
+
+
+};
+
+// 使用RANSAC算法来拟合直线
+// 参数:
+//   points: 输入点集
+//   line: 输出的拟合直线，包含直线的起始点和方向向量 (x1, y1, x2, y2)
+//   iterations: 迭代次数
+//   sigma: 高斯核参数，用于确定样本点是否为内点
+//   k_min: 随机选择样本点的最小比例
+//   k_max: 随机选择样本点的最大比例
+void fitLineRANSAC(const std::vector<cv::Point2f>& points, cv::Vec4f& line, int iterations, double sigma, double k_min, double k_max)
+{
+	int numPoints = points.size();
+	double threshold = sigma;
+	double bestCost = std::numeric_limits<double>::max();
+
+	// 迭代RANSAC算法
+	for (int i = 0; i < iterations; i++)
+	{
+		// 随机选择两个样本点
+		std::random_device rd;
+		std::mt19937 gen(rd());
+		std::uniform_real_distribution<double> distribution(k_min, k_max);
+		int index1 = static_cast<int>(distribution(gen) * numPoints);
+		int index2 = static_cast<int>(distribution(gen) * numPoints);
+		cv::Point2f p1 = points[index1];
+		cv::Point2f p2 = points[index2];
+
+		// 计算直线方向向量和起始点坐标
+		cv::Vec4f tempLine = cv::Vec4f(p1.x, p1.y, p2.x - p1.x, p2.y - p1.y);
+		double lineLength = std::sqrt(tempLine[2] * tempLine[2] + tempLine[3] * tempLine[3]);
+		tempLine[2] /= lineLength;
+		tempLine[3] /= lineLength;
+
+		// 计算点到直线的距离
+		double cost = 0;
+		for (int j = 0; j < numPoints; j++)
+		{
+			cv::Point2f point = points[j];
+			double distance = std::abs((point.x - tempLine[0]) * tempLine[3] - (point.y - tempLine[1]) * tempLine[2]);
+			cost += distance < threshold ? distance : threshold;
+		}
+
+		// 更新最好的直线
+		if (cost < bestCost)
+		{
+			line = tempLine;
+			bestCost = cost;
+		}
 	}
 }
