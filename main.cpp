@@ -25,17 +25,14 @@ using namespace rs2;
 Mat Road_element_erode, Road_element_dilate;		//图像运算的核 
 Mat Road_HSV_image, Road_dst_image;
 Mat Road_edge_0, Road_edge_dst;
-//Mat last_color_image;					// 上一帧
 
 //画轮廓
 vector<vector<cv::Point>> contours;		//轮廓点集的集合
 vector<cv::Vec4i> hierarchy;			//层级
-cv::Rect2d roi;							//框
 
 
 // 滑动条 霍夫直线交点的阈值
 int AlphaValuesSlider;					//滑动条对应的变量
-int whether_color = 0;
 const int MaxAlphaValue = 500;			//Alpha的最大值
 
 int H, S, V;
@@ -46,9 +43,6 @@ float fps;							// 帧率
 float REJECT_DEGREE_TH = 4.0;		// 灭点？
 char fps_char[50];					// 屏幕显示
 clock_t time1, time2;				// 计算fps变量
-
-double left_lines[];
-double right_lines[];
 
 // https://dev.intelrealsense.com/docs/rs-align-advanced
 // 在该网站中可以看到函数的具体解释
@@ -91,17 +85,8 @@ std::vector<std::vector<cv::Vec4i>> clusterLines(std::vector<cv::Vec4i>& lines, 
 // 清除小连通域
 void Clear_MicroConnected_Areas(cv::Mat src, cv::Mat& dst, double min_area);
 
-// 计算斜率
-float Get_K(float x1, float y1, float x2, float y2);
-
-// 计算两个x或y之间的中点x，中点y
-int Get_mid_axis(int num1, int num2);
 
 void fitLineRansac(const std::vector<cv::Point2f>& points, cv::Vec4f& line, int iterations , double sigma, double k_min , double k_max );
-
-void fitLineRANSAC(const std::vector<cv::Point2f>& points, cv::Vec4f& line, int iterations, double sigma, double k_min, double k_max);
-
-void fitMultipleLinesRansac(const std::vector<cv::Point2f>& points, std::vector<cv::Vec4f>& lines, int numLines, int iterations, double sigma, double k_min, double k_max);
 
 void draw_line_k(Mat image, float k, cv::Point point, const cv::Scalar& color, int thickness);
 
@@ -189,7 +174,6 @@ Mat D435if_Camera::frame_to_mat(const rs2::frame& f)
 
 	if (f.get_profile().format() == RS2_FORMAT_BGR8)
 	{
-		whether_color = 1;
 		//cout << "RS2_FORMAT_BGR8" << endl;
 		return Mat(Size(w, h), CV_8UC3, (void*)f.get_data(), Mat::AUTO_STEP);
 	}
@@ -256,7 +240,6 @@ Mat D435if_Camera::readAlignedCamera(rs2_stream align_to, rs2::align align, fram
 
 	//Mat aligned_image_color(Size(640, 480), CV_8UC3, (void*)other_frame.get_data(), Mat::AUTO_STEP);
 	Mat aligned_image_color = frame_to_mat(other_frame);
-	whether_color = 0;
 
 	return aligned_image_color;
 }
@@ -396,16 +379,13 @@ int main() try
 		Mat aligned_image_color = My_D435if_Camera.readAlignedCamera(align_to, align, frame_set_data, depth_scale, depth_clipping_distance);
 		Mat src_color_image = My_D435if_Camera.readColorCamera();
 
-		imshow("src_color_image", src_color_image);
+		// imshow("src_color_image", src_color_image);
 
 
 		/* #################################################### 道路边缘 开始 #################################################### */
 
 		// 彩图HSV处理，阈值变黑白，霍夫拟合直线
 		// 【发送数据： 角度 float 判断角度是否为90或-90左右即可】
-
-		Mat Road_mask; // 实地测试后对图像进行遮罩
-		Mat src_color_Mask; // 遮罩后的原始彩图
 
 		cvtColor(src_color_image, Road_HSV_image, cv::COLOR_BGR2HSV);
 		//inRange(Road_HSV_image, cv::Scalar(11, 43, 46), cv::Scalar(34, 255, 255), Road_dst_image); // 黄+橙色
@@ -442,6 +422,27 @@ int main() try
 		GaussianBlur(Road_edge_dst, Road_edge_dst, cv::Size(5, 5), 0, 0);
 		//imshow("edge", edge_dst);
 
+		Mat Road_mask; // 实地测试后对图像进行遮罩
+		Road_edge_dst.copyTo(Road_mask);
+
+		// 梯形 ROI 区域进行 mask (400, 0) (220, 420) (200, 860), (400, 1280)
+		for (int i = 0; i < Road_mask.rows; ++i) //y
+		{
+			for (int j = 0; j < Road_mask.cols; ++j) //x
+			{
+				// 640 (x-j) * 480 (y-i)
+				if (i >= (480 - 2 * j) && i >= (2 * j - 800))
+				{
+					// 正常坐标系 以水平线为轴 翻上去
+					Road_mask.at<uchar>(i, j) = 0;
+					//src_color_image.at<cv::Vec3b>(i, j)[0] = 0;
+					//src_color_image.at<cv::Vec3b>(i, j)[1] = 0;
+					//src_color_image.at<cv::Vec3b>(i, j)[2] = 0;
+				}
+			}
+		}
+
+		imshow("Road_mask", Road_mask);
 
 		//Mat edge0;
 		//Canny(src_color_image, edge0, 100, 300, 3);
@@ -517,7 +518,7 @@ int main() try
 
 		//-------------------------- 霍夫 线段拟合
 		vector<cv::Vec4i> Road_Hough_lines;
-		HoughLinesP(Road_edge_dst, Road_Hough_lines, 1, CV_PI / 180, AlphaValuesSlider, 30, 30);
+		HoughLinesP(Road_mask, Road_Hough_lines, 1, CV_PI / 180, AlphaValuesSlider, 30, 30);
 
 		for (size_t i = 0; i < Road_Hough_lines.size(); i++)
 		{
@@ -653,7 +654,7 @@ int main() try
 			//cout << "【代表线段】线段中点为：（" << represent_line_midpoint_x << "，" << represent_line_midpoint_y << "），";
 			//cout << "线段与水平线的角度为：" << represent_line_angle << endl;
 			
-			draw_line_k(aligned_image_color, represent_line_slope, Point(represent_line_midpoint_x, represent_line_midpoint_y),
+			draw_line_k(src_color_image, represent_line_slope, Point(represent_line_midpoint_x, represent_line_midpoint_y),
 				cv::Scalar(28, 156, 255), 1);
 
 
@@ -690,7 +691,7 @@ int main() try
 
 		float bisector_angle_mid = atan(bisector_k_average) * 180.0 / 3.1415926;
 
-		draw_line_k(aligned_image_color, bisector_k_average, cv::Point(bisector_X_average, bisector_Y_average),
+		draw_line_k(src_color_image, bisector_k_average, cv::Point(bisector_X_average, bisector_Y_average),
 			cv::Scalar(255, 255, 255), 1);
 
 
@@ -718,8 +719,8 @@ int main() try
 
 
 		sprintf_s(fps_char, "fps: %f", fps);
-		cv::putText(aligned_image_color, (string)fps_char, cv::Point(20, 20), cv::FONT_HERSHEY_PLAIN, 2, cv::Scalar(0, 255, 55), 2, 5);
-		imshow("道路-深彩对齐", aligned_image_color);
+		cv::putText(src_color_image, (string)fps_char, cv::Point(20, 20), cv::FONT_HERSHEY_PLAIN, 2, cv::Scalar(0, 255, 55), 2, 5);
+		imshow("道路-深彩对齐", src_color_image);
 
 		// 发送数据
 		// 道路中点与图像中心的距离
@@ -788,53 +789,50 @@ int main() try
 		// 
 
 
-		Mat depth_image = My_D435if_Camera.readDepthCamera();
-		Mat depth_image_colored;
+		Mat Bridge_depth_image = My_D435if_Camera.readDepthCamera();
+		Mat Bridge_depth_image_colored;
 		float diatance = 0;
-		convertScaleAbs(depth_image, depth_image, 1.0, 0.0); //黑白
-		applyColorMap(depth_image, depth_image_colored, COLORMAP_AUTUMN); //彩色
+
+		convertScaleAbs(Bridge_depth_image, Bridge_depth_image, 1.0, 0.0); //黑白
+		applyColorMap(Bridge_depth_image, Bridge_depth_image_colored, COLORMAP_AUTUMN); //彩色
 
 		// 深度数据存储二维数组
-		int height = depth_image_colored.rows;	//y
-		int width = depth_image_colored.cols;	//x
-		vector<vector<float>> depthArray(height, vector<float>(width, 0.0)); 
+		int height = Bridge_depth_image_colored.rows;	//y
+		int width = Bridge_depth_image_colored.cols;	//x
+		vector<vector<float>> Bridge_depthArray(height, vector<float>(width, 0.0));
 		//eg 图片是宽200，高100，上面语句生成100行，200列的数组。[100][200]
 		//内部的vector<float>表示每一行的向量，它的大小为width，且初始值为0。
 
-		//clock_t time11 = clock();
+
 		// 将深度图像数据存储到二维数组中
-		for (int i = 0; i < depth_image_colored.rows; i++)
+		for (int i = 0; i < Bridge_depth_image_colored.rows; i++)
 		{
-			for (int j = 0; j < depth_image_colored.cols; j++)
+			for (int j = 0; j < Bridge_depth_image_colored.cols; j++)
 			{
 				// 获取深度值
 				diatance = aligned_depth_frame.get_distance(j, i);
 				// 存到二维数组中
-				depthArray[i][j] = diatance;
+				Bridge_depthArray[i][j] = diatance;
 			}
 		}
-		//clock_t time22 = clock();
 
-		clock_t time11 = clock();
+
 		// 检测在 20cm 左右的数据点
-		vector<Point2f> mutatedPoints; //mutated 突变
+		vector<Point2f> Bridge_specfic_Points; 
 		// 1 cm ：0.01
 		for (int i = 1; i < height - 1; i++) 
 		{
 			for (int j = 1; j < width - 1; j++) 
 			{
-				// 计算深度
-				int depthDiff = depthArray[i][j] * 100;
-				// 判断是否满足突变条件
+				int depthDiff = Bridge_depthArray[i][j] * 100;
+
 				if (depthDiff >= 25 && depthDiff <= 30) //25厘米到30厘米
 				{
-					cv::circle(depth_image_colored, Point(j, i), 1, Scalar(255, 255, 255));
-					mutatedPoints.push_back(Point(j, i));
+					cv::circle(Bridge_depth_image_colored, Point(j, i), 1, Scalar(255, 255, 255));
+					Bridge_specfic_Points.push_back(Point(j, i));
 				}
 			}
 		}
-		clock_t time22 = clock();
-		cout << time22 - time11 << endl;
 
 		// 已知斜率 k ，已知线上一点 x1,y1 画直线（从左到右）
 		// 需要算出直线上另外两个点
@@ -843,18 +841,18 @@ int main() try
 		// cv::line(img, P1, P2, cv::Scalar(255, 0, 0), 1)
 
 
-		time11 = clock();
-		Vec4f line_Ransac;
-		fitLineRansac(mutatedPoints, line_Ransac, 300, 1, -10, 10);  // 调用fitLineRansac函数拟合一条直线
+		clock_t time11 = clock();
+		Vec4f Bridge_line_Ransac;
+		fitLineRansac(Bridge_specfic_Points, Bridge_line_Ransac, 300, 1, -10, 10);  // 调用fitLineRansac函数拟合一条直线
 		
 		//100 30
 		//300 100
 
-		time22 = clock();
+		clock_t time22 = clock();
 		cout << "RANSAC用时"<<time22 - time11 << endl;
 
-		float k = line_Ransac[1] / line_Ransac[0];
-		float b = line_Ransac[3] - k * line_Ransac[2];
+		float k = Bridge_line_Ransac[1] / Bridge_line_Ransac[0];
+		float b = Bridge_line_Ransac[3] - k * Bridge_line_Ransac[2];
 		cv::Point p1, p2, p3;
 		p1.y = 640;
 		p1.x = (p1.y - b) / k;
@@ -864,33 +862,14 @@ int main() try
 		p3.y = 320;
 		p3.x = (p3.y - b) / k;
 		
-		cv::line(depth_image_colored, p1, p2, cv::Scalar(0, 255, 0), 2);
+		cv::line(Bridge_depth_image_colored, p1, p2, cv::Scalar(0, 255, 0), 2);
 
-		double vertical_line_k = -line_Ransac[0] / line_Ransac[1]; // 垂线斜率
-		draw_line_k(depth_image_colored, vertical_line_k, p3, cv::Scalar(255, 0, 0), 2);
-
-
-		//int numLines = 3;
-		//std::vector<cv::Vec4f> line_Ransac;
-		//fitMultipleLinesRansac(mutatedPoints, line_Ransac, numLines, 1000, 1, -0.7, 0.7);
-
-		//for (int i = 0; i < line_Ransac.size(); i++)
-		//{
-		//	double k = line_Ransac[i][1] / line_Ransac[i][0];
-		//	double b = line_Ransac[i][3] - k * line_Ransac[i][2];
-		//	cv::Point p1, p2;
-		//	p1.y = 640;
-		//	p1.x = (p1.y - b) / k;
-		//	p2.y = 0;
-		//	p2.x = (p2.y - b) / k;
-		//	cv::line(depth_image, p1, p2, cv::Scalar(0, 255, 0), 2);
-		//}
-
-
+		double vertical_line_k = -Bridge_line_Ransac[0] / Bridge_line_Ransac[1]; // 垂线斜率
+		draw_line_k(Bridge_depth_image_colored, vertical_line_k, p3, cv::Scalar(255, 0, 0), 2);
 
 		sprintf_s(fps_char, "fps: %f", fps);
-		cv::putText(depth_image_colored, (string)fps_char, cv::Point(20, 20), cv::FONT_HERSHEY_PLAIN, 2, cv::Scalar(0, 255, 55), 2, 5);
-		imshow("双木桥-depth", depth_image_colored);
+		cv::putText(Bridge_depth_image_colored, (string)fps_char, cv::Point(20, 20), cv::FONT_HERSHEY_PLAIN, 2, cv::Scalar(0, 255, 55), 2, 5);
+		imshow("双木桥-depth", Bridge_depth_image_colored);
 
 		
 
@@ -922,28 +901,6 @@ catch (const rs2::error& e) {
 catch (const exception& e) {
 	cout << e.what() << endl;
 	return EXIT_FAILURE;
-}
-
-//鼠标回调 hsv
-void on_Mouse_HSV(int event, int x, int y, int flags, void* param)
-{
-	if (event == CV_EVENT_LBUTTONDOWN)
-	{
-		px = x; 
-		py = y;
-		buttondown = 1;
-	}
-}
-
-//鼠标回调 距离
-void on_Mouse_Distance(int event, int x, int y, int flags, void* param)
-{
-	if (event == CV_EVENT_LBUTTONDOWN)
-	{
-		px = x;
-		py = y;
-		buttondown = 2;
-	}
 }
 
 bool profile_changed(const std::vector<rs2::stream_profile>& current, const std::vector<rs2::stream_profile>& prev)
@@ -995,6 +952,28 @@ void remove_background(rs2::video_frame& other_frame, const rs2::depth_frame& de
 				std::memset(&p_other_frame[offset], 0x99, other_bpp);
 			}
 		}
+	}
+}
+
+//鼠标回调 hsv
+void on_Mouse_HSV(int event, int x, int y, int flags, void* param)
+{
+	if (event == CV_EVENT_LBUTTONDOWN)
+	{
+		px = x;
+		py = y;
+		buttondown = 1;
+	}
+}
+
+//鼠标回调 距离
+void on_Mouse_Distance(int event, int x, int y, int flags, void* param)
+{
+	if (event == CV_EVENT_LBUTTONDOWN)
+	{
+		px = x;
+		py = y;
+		buttondown = 2;
 	}
 }
 
@@ -1236,11 +1215,6 @@ float Get_K(float x1, float y1, float x2, float y2)
 	return k;
 }
 
-int Get_mid_axis(int num1, int num2)
-{
-	// num1 小于 num2
-	return num1 + (num2 - num1) / 2;
-}
 
 //RANSAC 拟合2D 直线
 //输入参数：
@@ -1275,10 +1249,9 @@ void fitLineRansac(const std::vector<cv::Point2f>& points,cv::Vec4f& line,int it
 		const cv::Point2f& p2 = points[i2];
 
 		cv::Point2f dp = p2 - p1; //直线的方向向量
-		dp = dp * 1.0 / norm(dp); // 归一化方向向量
 		double score = 0; // 当前模型的得分
-		//double slope = dp.y / dp.x;
-
+		dp = dp * 1.0 / norm(dp); // 归一化方向向量
+		
 		if (dp.y / dp.x <= k_max && dp.y / dp.x >= k_min)
 		{
 			// 检查斜率是否在给定范围内
@@ -1286,7 +1259,7 @@ void fitLineRansac(const std::vector<cv::Point2f>& points,cv::Vec4f& line,int it
 			{
 				// 计算点到直线的向量
 				cv::Point2f v = points[i] - p1;
-				double d = v.y * dp.x - v.x * dp.y; //向量a与b叉乘/向量b的模.||b||=1./norm(dp)
+				double d = (double)v.y * dp.x - (double)v.x * dp.y; //向量a与b叉乘/向量b的模.||b||=1./norm(dp)
 				if (fabs(d) < sigma)
 				{
 					// 使用误差定义的方式计算得分
@@ -1304,16 +1277,6 @@ void fitLineRansac(const std::vector<cv::Point2f>& points,cv::Vec4f& line,int it
 
 }
 
-// 定义拟合多条直线的函数
-void fitMultipleLinesRansac(const std::vector<cv::Point2f>& points, std::vector<cv::Vec4f>& lines, int numLines, int iterations = 1000, double sigma = 1., double k_min = -7., double k_max = 7.) 
-{
-	for (int i = 0; i < numLines; i++) 
-	{
-		cv::Vec4f line;
-		fitLineRansac(points, line, iterations, sigma, k_min, k_max);  // 调用fitLineRansac函数拟合一条直线
-		lines.push_back(line);  // 将拟合的直线参数保存到lines中
-	}
-}
 
 void draw_line_k(Mat image,float k, cv::Point point, const cv::Scalar &color,int thickness )
 {
@@ -1323,56 +1286,5 @@ void draw_line_k(Mat image,float k, cv::Point point, const cv::Scalar &color,int
 	p2.x = 640;
 	p2.y = point.y + k * (p2.x - point.x);
 	cv::line(image, p1, p2, color, thickness);
-
-
 };
 
-// 使用RANSAC算法来拟合直线
-// 参数:
-//   points: 输入点集
-//   line: 输出的拟合直线，包含直线的起始点和方向向量 (x1, y1, x2, y2)
-//   iterations: 迭代次数
-//   sigma: 高斯核参数，用于确定样本点是否为内点
-//   k_min: 随机选择样本点的最小比例
-//   k_max: 随机选择样本点的最大比例
-void fitLineRANSAC(const std::vector<cv::Point2f>& points, cv::Vec4f& line, int iterations, double sigma, double k_min, double k_max)
-{
-	int numPoints = points.size();
-	double threshold = sigma;
-	double bestCost = std::numeric_limits<double>::max();
-
-	// 迭代RANSAC算法
-	for (int i = 0; i < iterations; i++)
-	{
-		// 随机选择两个样本点
-		std::random_device rd;
-		std::mt19937 gen(rd());
-		std::uniform_real_distribution<double> distribution(k_min, k_max);
-		int index1 = static_cast<int>(distribution(gen) * numPoints);
-		int index2 = static_cast<int>(distribution(gen) * numPoints);
-		cv::Point2f p1 = points[index1];
-		cv::Point2f p2 = points[index2];
-
-		// 计算直线方向向量和起始点坐标
-		cv::Vec4f tempLine = cv::Vec4f(p1.x, p1.y, p2.x - p1.x, p2.y - p1.y);
-		double lineLength = std::sqrt(tempLine[2] * tempLine[2] + tempLine[3] * tempLine[3]);
-		tempLine[2] /= lineLength;
-		tempLine[3] /= lineLength;
-
-		// 计算点到直线的距离
-		double cost = 0;
-		for (int j = 0; j < numPoints; j++)
-		{
-			cv::Point2f point = points[j];
-			double distance = std::abs((point.x - tempLine[0]) * tempLine[3] - (point.y - tempLine[1]) * tempLine[2]);
-			cost += distance < threshold ? distance : threshold;
-		}
-
-		// 更新最好的直线
-		if (cost < bestCost)
-		{
-			line = tempLine;
-			bestCost = cost;
-		}
-	}
-}
