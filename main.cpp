@@ -319,6 +319,7 @@ try
 	char TranckbarName[50] = "霍夫交点阈值 最大1000";
 	createTrackbar(TranckbarName, "道路-深彩对齐", nullptr, MaxAlphaValue, on_Trackbar, 0);
 	on_Trackbar(AlphaValuesSlider, 0);
+
 	while (true)
 	{
 		time1 = clock(); // 计时
@@ -402,7 +403,6 @@ try
 		// erode(Road_dst_image, Road_dst_image, Road_element_erode); //腐蚀
 		erode(Road_dst_image, Road_dst_image, Road_element_erode); // 腐蚀
 		// imshow("道路-二值化后", Road_dst_image);
-
 		GaussianBlur(Road_dst_image, Road_dst_image, cv::Size(5, 5), 0, 0);
 		// imshow("道路-Road_dst_image", Road_dst_image);
 		Canny(Road_dst_image, Road_edge_0, 100, 300, 3); // 3、4位 数值越小细节越多
@@ -453,7 +453,7 @@ try
 		// https://zhuanlan.zhihu.com/p/60891432
 		// https://zhuanlan.zhihu.com/p/630083399
 
-		// 【3 聚类】------------------------- 聚类 [天蓝色线]
+		// 【聚类】------------------------- 聚类 [天蓝色线]
 		// 对之前获取到的直线（霍夫）进行聚类，分出车道线的左右
 
 		// ======================== 【step 1】线段聚类 & 【step 2】找出每组线段的代表直线
@@ -531,11 +531,13 @@ try
 
 		// ======================== 【step 1】线段聚类 & 【step 2】找出每组线段的代表直线
 
-		if (clusters.size() < 2)
-		{
-			cout << "聚类不足两类！" << endl;
-			continue;
-		}
+		//if (clusters.size() < 2)
+		//{
+		//	cout << "聚类不足两类！" << endl;
+		//	imshow("道路-深彩对齐", src_color_image);
+
+		//	continue;
+		//}
 
 		// -------------------------【step 2】一对线段找角平分线
 
@@ -544,46 +546,55 @@ try
 		// 先确定斜率，再找一个点即可画出角平分线。判断角平分线与水平线的角度，在90度左右即可。
 		// 假设聚类之后的代表直线只有两条
 
-		float bisector_k1, bisector_k2, bisector_k_average;
-		bisector_k1 = represent_line[0][1] / represent_line[0][0];
-		bisector_k2 = represent_line[1][1] / represent_line[1][0];
-		bisector_k_average = (float)(bisector_k1 + bisector_k2) / 2.0;
+		if (clusters.size() >= 2)
+		{
+			float bisector_k1, bisector_k2, bisector_k_average;
+			bisector_k1 = represent_line[0][1] / represent_line[0][0];
+			bisector_k2 = represent_line[1][1] / represent_line[1][0];
+			bisector_k_average = (float)(bisector_k1 + bisector_k2) / 2.0;
 
-		float bisector_midX1 = represent_line[0][2];
-		float bisector_midY1 = represent_line[0][3];
-		float bisector_midX2 = represent_line[1][2];
-		float bisector_midY2 = represent_line[1][3];
-		float bisector_X_average, bisector_Y_average;
-		bisector_X_average = (float)(bisector_midX1 + bisector_midX2) / 2.0;
-		bisector_Y_average = (float)(bisector_midY1 + bisector_midY2) / 2.0;
+			float bisector_midX1 = represent_line[0][2];
+			float bisector_midY1 = represent_line[0][3];
+			float bisector_midX2 = represent_line[1][2];
+			float bisector_midY2 = represent_line[1][3];
+			float bisector_X_average, bisector_Y_average;
+			bisector_X_average = (float)(bisector_midX1 + bisector_midX2) / 2.0;
+			bisector_Y_average = (float)(bisector_midY1 + bisector_midY2) / 2.0;
 
-		float bisector_b = bisector_Y_average - (bisector_k_average * bisector_X_average);
-		float bisector_angle_mid = atan(bisector_k_average) * 180.0 / 3.1415926;
+			float bisector_b = bisector_Y_average - (bisector_k_average * bisector_X_average);
+			float bisector_angle_mid = atan(bisector_k_average) * 180.0 / 3.1415926;
 
-		draw_line_k(src_color_image, bisector_k_average, cv::Point(bisector_X_average, bisector_Y_average),
-			cv::Scalar(255, 255, 255), 1);
+			draw_line_k(src_color_image, bisector_k_average, cv::Point(bisector_X_average, bisector_Y_average),
+				cv::Scalar(255, 255, 255), 1);
 
-		// cout << "【角平分】角平分线 y = " << bisector_k_average << "x + " << bisector_b ;
-		// cout << "，线段与水平线的角度为：" << bisector_angle_mid << endl;
+			// cout << "【角平分】角平分线 y = " << bisector_k_average << "x + " << bisector_b ;
+			// cout << "，线段与水平线的角度为：" << bisector_angle_mid << endl;
 
-		// -------------------------【step 3】一对直线找角平分线
+			// -------------------------【step 3】一对直线找角平分线
 
-		// 【3 聚类】------------------------- 聚类 [天蓝色线]
+			// 【3 聚类】------------------------- 聚类 [天蓝色线]
 
-		// 发送数据
-		// 发送 角平分线与水平线的夹角 bisector_angle_mid
+			/* ================================================ 道路边缘 霍夫直线拟合 ================================================= */
 
-		////【压入摄像头得到的数据】
-		// cmda.data.push_back(bisector_angle_mid);
 
-		/* ================================================ 道路边缘 霍夫直线拟合 ================================================= */
+			// 发送数据
+			// 道路中点与图像中心的距离
 
-		sprintf(fps_char, "fps: %f", fps);
+			// 发送 角平分线与水平线的夹角 bisector_angle_mid
+
+			////【压入摄像头得到的数据】
+			// cmda.data.push_back(bisector_angle_mid);
+
+		}
+
+		else
+		{
+			cout << "聚类不足两类！" << endl;
+		}
+
+		sprintf_s(fps_char, "fps: %f", fps);
 		cv::putText(src_color_image, (string)fps_char, cv::Point(20, 20), cv::FONT_HERSHEY_PLAIN, 2, cv::Scalar(0, 255, 55), 2, 5);
 		imshow("道路-深彩对齐", src_color_image);
-
-		// 发送数据
-		// 道路中点与图像中心的距离
 
 		////-------------------------- 点击获取深度
 		// imshow("深彩对齐", aligned_image_color);
@@ -635,6 +646,7 @@ try
 
 		/* #################################################### 台阶 结束 #################################################### */
 
+
 		/* #################################################### 双木桥 开始 #################################################### */
 
 		//
@@ -654,19 +666,28 @@ try
 		// 深度数据存储二维数组
 		int height = Bridge_depth_image_colored.rows; // y
 		int width = Bridge_depth_image_colored.cols;  // x
-		vector<vector<float>> Bridge_depthArray(height, vector<float>(width, 0.0));
+		vector<vector<float>> Bridge_depthArray(height, vector<float>(width, -0.5));
 		// eg 图片是宽200，高100，上面语句生成100行，200列的数组。[100][200]
 		// 内部的vector<float>表示每一行的向量，它的大小为width，且初始值为0。
 
 		// 将深度图像数据存储到二维数组中
-		for (int i = 0; i < Bridge_depth_image_colored.rows; i++)
+		for (int i = 0;i<Bridge_depth_image_colored.rows ; i++) //height
 		{
-			for (int j = 0; j < Bridge_depth_image_colored.cols; j++)
+			for (int j = 0; j < Bridge_depth_image_colored.cols; j++) //width
 			{
-				// 获取深度值
-				diatance = aligned_depth_frame.get_distance(j, i);
-				// 存到二维数组中
-				Bridge_depthArray[i][j] = diatance;
+				if (i > 100 && i < 540)
+				{
+					// 获取深度值
+					diatance = aligned_depth_frame.get_distance(j, i);
+					// 存到二维数组中
+					Bridge_depthArray[i][j] = diatance;
+				}
+				else
+				{
+					//Bridge_depth_image.at<cv::Vec3b>(i, j)[0] = 255;
+					//Bridge_depth_image.at<cv::Vec3b>(i, j)[1] = 255;
+					//Bridge_depth_image.at<cv::Vec3b>(i, j)[2] = 255;
+				}
 			}
 		}
 
@@ -674,17 +695,16 @@ try
 		float i_sum = 0, i_mid;
 		int count = 0;
 
-		// 检测在 ? 左右的数据点
+		// 检测在 ? 左右的数据点 1 cm ：0.01
 		vector<Point2f> Bridge_specfic_Points;
-		// 1 cm ：0.01
+
 		for (int i = 1; i < height - 1; i++)
 		{
 			for (int j = 1; j < width - 1; j++)
 			{
 				int depthDiff = Bridge_depthArray[i][j] * 100;
-
 				// 640 (x->j) * 480 (y->i)
-				if (i > 100 && j < 540 && depthDiff >= 90 && depthDiff <= 95)
+				if (depthDiff >= 90 && depthDiff <= 95)
 				{
 					i_sum = i + i_sum;
 					count = count + 1;
@@ -755,7 +775,7 @@ try
 		// cmad.data.push_back(Bridge_angle_mid);
 		// cmad.data.push_back(p3.x-240);
 
-		sprintf(fps_char, "fps: %f", fps);
+		sprintf_s(fps_char, "fps: %f", fps);
 		cv::putText(Bridge_depth_image_colored, (string)fps_char, cv::Point(20, 20), cv::FONT_HERSHEY_PLAIN, 2, cv::Scalar(0, 255, 55), 2, 5);
 		imshow("双木桥-depth", Bridge_depth_image_colored);
 
