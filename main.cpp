@@ -18,6 +18,24 @@
 
 #include "omp.h"
 
+// ROS 
+//#include "ros/ros.h"
+//#include <std_msgs/Float64MultiArray.h>
+//#include <nav_msgs/Path.h>
+//#include <sstream>
+//
+//float route[2];
+float cam_data[6];
+//
+//void pathCallback(const nav_msgs::Path::ConstPtr& pathMsg)
+//{
+//	// 处理接收到的路径数据
+//	const auto& pose = pathMsg->poses[0];
+//	route[0] = pose.pose.position.x;
+//	route[1] = pose.pose.position.y;
+//}
+
+
 using namespace std;
 using namespace cv;
 using namespace rs2;
@@ -294,6 +312,14 @@ rs2_stream D435if_Camera::find_stream_to_align(const std::vector<rs2::stream_pro
 int main()
 try
 {
+	// ROS 
+	//ros::init(argc, argv, "cam_node");
+	//ros::NodeHandle nh;
+	//ros::Publisher cam_pub = nh.advertise<std_msgs::Float64MultiArray>("/campub", 10);
+	//ros::Subscriber cam_sub = nh.subscribe<nav_msgs::Path::ConstPtr>("/path", 10, pathCallback);
+	//std_msgs Float64MultiArray cam_data;
+	//ros::Rate r(20);
+
 	D435if_Camera My_D435if_Camera;
 	My_D435if_Camera.start();
 
@@ -369,6 +395,8 @@ try
 
 		Mat aligned_image_color = My_D435if_Camera.readAlignedCamera(align_to, align, frame_set_data, depth_scale, depth_clipping_distance);
 		Mat src_color_image = My_D435if_Camera.readColorCamera();
+		
+
 
 		// imshow("src_color_image", src_color_image);
 
@@ -531,13 +559,6 @@ try
 
 		// ======================== 【step 1】线段聚类 & 【step 2】找出每组线段的代表直线
 
-		//if (clusters.size() < 2)
-		//{
-		//	cout << "聚类不足两类！" << endl;
-		//	imshow("道路-深彩对齐", src_color_image);
-
-		//	continue;
-		//}
 
 		// -------------------------【step 2】一对线段找角平分线
 
@@ -564,6 +585,9 @@ try
 			float bisector_b = bisector_Y_average - (bisector_k_average * bisector_X_average);
 			float bisector_angle_mid = atan(bisector_k_average) * 180.0 / 3.1415926;
 
+			float Road_x_send = 0, y = 240;
+			Road_x_send = (y - bisector_b) / bisector_k_average;
+
 			draw_line_k(src_color_image, bisector_k_average, cv::Point(bisector_X_average, bisector_Y_average),
 				cv::Scalar(255, 255, 255), 1);
 
@@ -578,12 +602,10 @@ try
 
 
 			// 发送数据
-			// 道路中点与图像中心的距离
-
-			// 发送 角平分线与水平线的夹角 bisector_angle_mid
-
-			////【压入摄像头得到的数据】
-			// cmda.data.push_back(bisector_angle_mid);
+			// bisector_angle_mid ：道路中线与水平线的夹角度数
+			// Road_x_send - 320：道路中点与图像中心的距离
+			cam_data[0] = bisector_angle_mid;
+			cam_data[1] = Road_x_send - 320;
 
 		}
 
@@ -660,6 +682,7 @@ try
 		Mat Bridge_depth_image_colored;
 		float diatance = 0;
 
+
 		convertScaleAbs(Bridge_depth_image, Bridge_depth_image, 1.0, 0.0);				// 黑白
 		applyColorMap(Bridge_depth_image, Bridge_depth_image_colored, COLORMAP_AUTUMN); // 彩色
 
@@ -670,12 +693,14 @@ try
 		// eg 图片是宽200，高100，上面语句生成100行，200列的数组。[100][200]
 		// 内部的vector<float>表示每一行的向量，它的大小为width，且初始值为0。
 
+
+
 		// 将深度图像数据存储到二维数组中
 		for (int i = 0;i<Bridge_depth_image_colored.rows ; i++) //height
 		{
 			for (int j = 0; j < Bridge_depth_image_colored.cols; j++) //width
 			{
-				if (i > 100 && i < 540)
+				if (i > 100 && i < 400)
 				{
 					// 获取深度值
 					diatance = aligned_depth_frame.get_distance(j, i);
@@ -684,19 +709,21 @@ try
 				}
 				else
 				{
-					//Bridge_depth_image.at<cv::Vec3b>(i, j)[0] = 255;
-					//Bridge_depth_image.at<cv::Vec3b>(i, j)[1] = 255;
-					//Bridge_depth_image.at<cv::Vec3b>(i, j)[2] = 255;
+					//Bridge_depth_image_colored.at<uchar>(i, j) = 255;
+					Bridge_depth_image_colored.at<cv::Vec3b>(i, j)[0] = 0;
+					Bridge_depth_image_colored.at<cv::Vec3b>(i, j)[1] = 0;
+					Bridge_depth_image_colored.at<cv::Vec3b>(i, j)[2] = 0;
 				}
 			}
 		}
 
-		Mat point_in_the_area;
 		float i_sum = 0, i_mid;
 		int count = 0;
 
 		// 检测在 ? 左右的数据点 1 cm ：0.01
 		vector<Point2f> Bridge_specfic_Points;
+
+
 
 		for (int i = 1; i < height - 1; i++)
 		{
@@ -770,21 +797,34 @@ try
 		double vertical_line_k = -Bridge_line_Ransac[0] / Bridge_line_Ransac[1]; // 垂线斜率
 		draw_line_k(Bridge_depth_image_colored, vertical_line_k, p3, cv::Scalar(255, 0, 0), 2);
 
-		//// 【发数据】
-		// float Bridge_angle_mid = atan(vertical_line_k) * 180.0 / 3.1415926;
-		// cmad.data.push_back(Bridge_angle_mid);
-		// cmad.data.push_back(p3.x-240);
-
 		sprintf_s(fps_char, "fps: %f", fps);
 		cv::putText(Bridge_depth_image_colored, (string)fps_char, cv::Point(20, 20), cv::FONT_HERSHEY_PLAIN, 2, cv::Scalar(0, 255, 55), 2, 5);
 		imshow("双木桥-depth", Bridge_depth_image_colored);
 
+
+		// 【发数据】
+		float Bridge_angle_mid = atan(vertical_line_k) * 180.0 / 3.1415926;
+		cam_data[4] = Bridge_angle_mid;
+		cam_data[5] = p3.x - 320;
+
 		/* #################################################### 双木桥 结束 #################################################### */
 
-		contours.clear();
-		hierarchy.clear();
+		//pub.publish(cam_data);
+		//r.sleep();
+		//ros::spinOnce();
+
 
 		aligned_image_color.release();
+		src_color_image.release();
+		Road_mask.release();
+		Bridge_depth_image.release();
+		Bridge_depth_image_colored.release();
+		contours.clear();
+		hierarchy.clear();
+		clusters.clear();
+		represent_line.clear();
+		Bridge_depthArray.clear();
+		Bridge_specfic_Points.clear();
 
 		if (waitKey(1) == 27)
 		{
